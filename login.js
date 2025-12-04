@@ -88,7 +88,7 @@ async function login() {
     // 这能确保我们已经通过了 DDoS-Guard 的验证。
     await page.waitForSelector('#email', { timeout: 60000 }); // 同样给足 60 秒
     
-    console.log('DDoS-Guard 已通过，成功进入登录页面。');e2' });
+    console.log('DDoS-Guard 已通过，成功进入登录页面。');
 
     await page.type('#email', process.env.USERNAME);
     await page.type('#password', process.env.PASSWORD);
