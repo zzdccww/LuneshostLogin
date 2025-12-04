@@ -69,8 +69,7 @@ async function login() {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--proxy-server=http://kZXMC3Z1:nOEy3w0R@8.218.207.5:20344'
+      '--disable-gpu'
     ]
   });
   const page = await browser.newPage();
