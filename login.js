@@ -131,7 +131,7 @@ async function login() {
     await page.screenshot({ path: screenshotPath, fullPage: true });
     await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, `*登录失败！*\n时间: ${new Date().toISOString()}\n错误: ${error.message}\n请检查 Artifacts 中的截图`);
     console.error('登录失败：', error.message);
-    console.error(`截屏已保存为 ${screenshotPath}`);
+    console.error(`截屏已保存为 login-failure.png`);
     throw error;
   } finally {
     await browser.close();
