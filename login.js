@@ -1,4 +1,6 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const axios = require('axios');
 
 async function sendTelegramMessage(botToken, chatId, message) {
@@ -62,7 +64,7 @@ async function solveTurnstile(page, sitekey, pageUrl) {
 
 async function login() {
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: 'new',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -71,32 +73,51 @@ async function login() {
     ]
   });
   const page = await browser.newPage();
-
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
   try {
-    await page.goto(process.env.WEBSITE_URL, { waitUntil: 'networkidle2' });
+   console.log('正在导航到网站...');
+    // 1. 增加页面加载的超时时间，给 DDoS-Guard 足够的验证时间
+    await page.goto(process.env.WEBSITE_URL, { 
+        waitUntil: 'networkidle2', 
+        timeout: 60000 // 增加到 60 秒
+    });
+
+    console.log('页面初步加载完成，等待通过 DDoS-Guard...');
+    // 2. 【关键改动】等待登录页的邮箱输入框出现，而不是 Turnstile。
+    // 这能确保我们已经通过了 DDoS-Guard 的验证。
+    await page.waitForSelector('#email', { timeout: 60000 }); // 同样给足 60 秒
+    
+    console.log('DDoS-Guard 已通过，成功进入登录页面。');e2' });
 
     await page.type('#email', process.env.USERNAME);
     await page.type('#password', process.env.PASSWORD);
-
-    await page.waitForSelector('.g-recaptcha', { timeout: 10000 });
+    console.log('正在查找 Cloudflare Turnstile...');
+    
+     // 3. 现在可以安全地等待 Turnstile 元素
+    await page.waitForSelector('.cf-turnstile', { timeout: 15000 });
 
     const sitekey = await page.evaluate(() => {
-      const el = document.querySelector('.g-recaptcha');
+      const el = document.querySelector('.cf-turnstile');
       return el ? el.dataset.sitekey : null;
     });
-    if (!sitekey) throw new Error('未找到 sitekey');
-    const currentUrl = page.url();
 
+    if (!sitekey) throw new Error('未找到 Turnstile sitekey');
+    
+    console.log('找到 Sitekey，正在请求 2Captcha 解决...');
+    const currentUrl = page.url();
     await solveTurnstile(page, sitekey, currentUrl);
+    
+    console.log('Turnstile 已解决，准备提交登录...');
+    await page.waitForTimeout(1000); // 短暂等待，确保 token 注入
 
     await page.click('button[type="submit"]');
 
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
 
     const currentUrlAfter = page.url();
     const title = await page.title();
+
     if (currentUrlAfter.includes('/') && !title.includes('Login')) {
       await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, `*登录成功！*\n时间: ${new Date().toISOString()}\n页面: ${currentUrlAfter}\n标题: ${title}`);
       console.log('登录成功！当前页面：', currentUrlAfter);
@@ -106,10 +127,11 @@ async function login() {
 
     console.log('脚本执行完成。');
   } catch (error) {
-    await page.screenshot({ path: 'login-failure.png', fullPage: true });
-    await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, `*登录失败！*\n时间: ${new Date().toISOString()}\n错误: ${error.message}\n请检查 Artifacts 中的 login-debug`);
+    const screenshotPath = 'login-failure.png';
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, `*登录失败！*\n时间: ${new Date().toISOString()}\n错误: ${error.message}\n请检查 Artifacts 中的截图`);
     console.error('登录失败：', error.message);
-    console.error('截屏已保存为 login-failure.png');
+    console.error(`截屏已保存为 ${screenshotPath}`);
     throw error;
   } finally {
     await browser.close();
