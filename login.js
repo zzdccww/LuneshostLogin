@@ -72,7 +72,7 @@ async function login() {
       '--disable-gpu',
       '--disable-blink-features=AutomationControlled', // 关键：隐藏自动化特征
       '--no-first-run',
-      '--no-zygote',
+      '--no-zygote'
       //'--single-process', // 有时候这个会导致不稳定，但在某些容器里必须开
     ]
   });
