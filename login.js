@@ -69,7 +69,11 @@ async function login() {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--disable-blink-features=AutomationControlled', // 关键：隐藏自动化特征
+      '--no-first-run',
+      '--no-zygote',
+      //'--single-process', // 有时候这个会导致不稳定，但在某些容器里必须开
     ]
   });
   const page = await browser.newPage();
@@ -78,15 +82,20 @@ async function login() {
   try {
    console.log('正在导航到网站...');
     // 1. 增加页面加载的超时时间，给 DDoS-Guard 足够的验证时间
+    await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+        });
+    });
     await page.goto(process.env.WEBSITE_URL, { 
         waitUntil: 'networkidle2', 
-        timeout: 60000 // 增加到 60 秒
+        timeout: 30000 // 增加到 60 秒
     });
 
     console.log('页面初步加载完成，等待通过 DDoS-Guard...');
     // 2. 【关键改动】等待登录页的邮箱输入框出现，而不是 Turnstile。
     // 这能确保我们已经通过了 DDoS-Guard 的验证。
-    await page.waitForSelector('#email', { timeout: 60000 }); // 同样给足 60 秒
+    await page.waitForSelector('#email', { timeout: 30000 }); // 同样给足 60 秒
     
     console.log('DDoS-Guard 已通过，成功进入登录页面。');
 
