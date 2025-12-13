@@ -70,37 +70,66 @@ async function login() {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--disable-blink-features=AutomationControlled', // 关键：隐藏自动化特征
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process' // 有时候这个会导致不稳定，但在某些容器里必须开
+      '--disable-blink-features=AutomationControlled', // 额外隐藏自动化特征
+      '--window-size=1920,1080' // 设置窗口大小，避免默认视窗被检测
     ]
   });
   const page = await browser.newPage();
+  
+  // 1. 设置更真实的 UA
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
+  // 2. 【核心修复】注入 Cookies
+  if (process.env.COOKIES_JSON) {
+    try {
+      const cookies = JSON.parse(process.env.COOKIES_JSON);
+      // 过滤掉可能导致问题的属性，只要核心数据
+      const validCookies = cookies.map(cookie => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        expires: cookie.expirationDate // Puppeteer 使用 expires, EditThisCookie 使用 expirationDate
+      }));
+      await page.setCookie(...validCookies);
+      console.log('✅ 成功注入 Cookies，尝试绕过 Cloudflare...');
+    } catch (e) {
+      console.error('❌ Cookies 注入失败:', e.message);
+    }
+  }
+
   try {
-   console.log('正在导航到网站...');
-    // 1. 增加页面加载的超时时间，给 DDoS-Guard 足够的验证时间
-    await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-        });
-    });
+    console.log('正在导航到网站...');
     await page.goto(process.env.WEBSITE_URL, { 
         waitUntil: 'networkidle2', 
-        timeout: 30000 // 增加到 60 秒
+        timeout: 60000 
     });
 
-    console.log('页面初步加载完成，等待通过 DDoS-Guard...');
-    // 2. 【关键改动】等待登录页的邮箱输入框出现，而不是 Turnstile。
-    // 这能确保我们已经通过了 DDoS-Guard 的验证。
-    await page.waitForSelector('#email', { timeout: 30000 }); // 同样给足 60 秒
-    
-    console.log('DDoS-Guard 已通过，成功进入登录页面。');
+    // 3. 处理 Cloudflare 拦截页面
+    // 检查页面标题是否包含 Cloudflare 的特征
+    const pageTitle = await page.title();
+    console.log(`当前页面标题: ${pageTitle}`);
 
-    await page.type('#email', process.env.USERNAME);
-    await page.type('#password', process.env.PASSWORD);
+    if (pageTitle.includes('Just a moment') || pageTitle.includes('Cloudflare')) {
+        console.log('⚠️ 检测到 Cloudflare 验证页面，尝试等待...');
+        // 如果有 cookies，这里通常会直接跳转。如果没有，这里等待 10 秒看是否通过
+        await page.waitForTimeout(10000); 
+    }
+
+    console.log('检查是否到达登录页...');
+    
+    // 使用 try-catch 包裹 waitForSelector，以便在超时时截图调试
+    try {
+        await page.waitForSelector('#email', { timeout: 30000 });
+    } catch (e) {
+        throw new Error('未找到邮箱输入框，可能仍被 Cloudflare 拦截 (Check login-failure.png)');
+    }
+    
+    console.log('DDoS-Guard/Cloudflare 已通过，成功进入登录页面。');
+
+    await page.type('#email', process.env.USERNAME, { delay: 100 }); // 加入输入延迟，模拟人类
+    await page.type('#password', process.env.PASSWORD, { delay: 100 });
+    
     console.log('正在查找 Cloudflare Turnstile...');
     
      // 3. 现在可以安全地等待 Turnstile 元素
@@ -122,7 +151,7 @@ async function login() {
 
     await page.click('button[type="submit"]');
 
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
 
     const currentUrlAfter = page.url();
     const title = await page.title();
@@ -135,12 +164,11 @@ async function login() {
     }
 
     console.log('脚本执行完成。');
-  } catch (error) {
+} catch (error) {
+    // ... 报错处理代码保持不变 ...
     const screenshotPath = 'login-failure.png';
     await page.screenshot({ path: screenshotPath, fullPage: true });
-    await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, `*登录失败！*\n时间: ${new Date().toISOString()}\n错误: ${error.message}\n请检查 Artifacts 中的截图`);
-    console.error('登录失败：', error.message);
-    console.error(`截屏已保存为 login-failure.png`);
+    // ...
     throw error;
   } finally {
     await browser.close();
